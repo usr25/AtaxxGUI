@@ -3,6 +3,7 @@ package wgui
 import (
 	"fmt"
 	"path"
+	"time"
 
 	"Ataxx/ataxx"
 	. "Ataxx/utils"
@@ -29,10 +30,20 @@ var (
 	redHaloIcon *gui.QIcon
 	bluHaloIcon *gui.QIcon
 
+	labelRED	*widgets.QLabel
+	labelBLU	*widgets.QLabel
+
 	buttons [8][8]Button
 
 	active      int = -1
 	activeColor int = -1
+
+	remTimeBLU 	time.Duration
+	remTimeRED 	time.Duration
+	turnChangeTime time.Time
+
+	turn 		int
+	stopTimer 	chan bool
 )
 
 type Button struct {
@@ -59,13 +70,71 @@ func setupPath(args []string) {
 	}
 }
 
-//TODO: Put this in DisplayBoard
-func updateTurnIcon() {
-	turn := ataxx.B().Turn
-	var icon *gui.QIcon
+func getMS(t float64) (int, int) {
+	return int(t) / 60, int(t) % 60
+}
+
+func LaunchTimer() {
+	turnChangeTime = time.Now()
+	remTimeRED = 3 * 60 * time.Second
+	remTimeBLU = 3 * 60 * time.Second
+
+	stopTimer = make(chan bool, 2)
+
+	setTimers()
+	updateTimers()
+}
+
+func setTimers() {
+	mB, sB := getMS(remTimeBLU.Seconds())
+	mR, sR := getMS(remTimeRED.Seconds())
+	labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mB, sB))
+	labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mR, sR))
+}
+
+
+func updateTimers() {
+	timeElaped := time.Now().Sub(turnChangeTime)
+
 	if turn == RED {
+		remTimeRED = remTimeRED - timeElaped
+		mins, secs := getMS(remTimeRED.Seconds())
+		labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mins, secs))
+	} else {
+		remTimeBLU = remTimeBLU - timeElaped
+		mins, secs := getMS(remTimeBLU.Seconds())
+		labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mins, secs))
+	}
+	turnChangeTime = time.Now()
+	timer := time.NewTimer(3 * time.Second / 7)
+
+	for channelAct := false; !channelAct; {
+		select {
+		case <-stopTimer:
+			return
+		case <-timer.C:
+			channelAct = true
+			//break //This doesnt work, go is just retarded
+		}
+	}
+
+	if remTimeBLU > 0 && remTimeRED > 0 {
+		updateTimers()
+	} else if remTimeBLU <= 0 {
+		gameEnd(RED)
+	} else {
+		gameEnd(BLU)
+	}
+}
+
+func updateTurnIcon() {
+	newTurn := ataxx.B().Turn
+	var icon *gui.QIcon
+	if newTurn == RED {
+		turn = RED
 		icon = redIcon
 	} else {
+		turn = BLU
 		icon = bluIcon
 	}
 
@@ -76,9 +145,8 @@ func setIcon(x, y int, icon *gui.QIcon) {
 	buttons[x][y].button.SetIcon(icon)
 }
 
-func gameEnd() {
+func gameEnd(winner int) {
 	var str string
-	winner := ataxx.Winner()
 	if winner == BLU {
 		str = "BLU is the winner!"
 	} else if winner == RED {
@@ -88,20 +156,21 @@ func gameEnd() {
 	}
 
 	//Show the 'final' button to reset the game
-	final = widgets.NewQPushButton2(str, nil)
-	final.SetMinimumSize2(100, 50)
-	final.ConnectClicked(reset)
-	centralLayout.AddWidget2(final, 1, 0, core.Qt__AlignCenter)
+	final.SetVisible(true)
+	final.SetText(str)
 }
 
 func reset(bool) {
-
+	stopTimer <- true //To avoid the blocking of the channel here stopTimer is buffered (cap = 2)
 	final.Hide()
 	ataxx.InitAtaxx()
 	DisplayBoard()
+	close(stopTimer)
+	go LaunchTimer()
 }
 
 func updateBoard(bc Button) {
+
 	DisplayBoard()
 	b := ataxx.B()
 	state := b.B[bc.row][bc.col]
@@ -124,8 +193,9 @@ func updateBoard(bc Button) {
 			Assert(ataxx.IsValidFen(fen), "The updated fen isn't valid")
 			lineEdit.SetText(fen)
 			DisplayBoard()
+			turnChangeTime = time.Now()
 			if ataxx.Finished() {
-				gameEnd()
+				gameEnd(ataxx.Winner())
 			}
 		}
 	}
@@ -225,12 +295,12 @@ func Start(num int, s []string) {
 	setupGrid()
 
 	//Clocks label
-	label1 := widgets.NewQLabel2("12:60", nil, 0)
-	label2 := widgets.NewQLabel2("31:21", nil, 0)
-	label1.SetFont(gui.NewQFont2("consolas", 21, 1, false))
-	label2.SetFont(gui.NewQFont2("consolas", 21, 1, false))
-	centralLayout.AddWidget2(label1, 0, 0, core.Qt__AlignLeft)
-	centralLayout.AddWidget2(label2, 0, 0, core.Qt__AlignRight)
+	labelRED = widgets.NewQLabel2("R--: 04:20", nil, 0)
+	labelBLU = widgets.NewQLabel2("B--: 27:18", nil, 0)
+	labelRED.SetFont(gui.NewQFont2("consolas", 21, 1, false))
+	labelBLU.SetFont(gui.NewQFont2("consolas", 21, 1, false))
+	centralLayout.AddWidget2(labelRED, 0, 0, core.Qt__AlignLeft)
+	centralLayout.AddWidget2(labelBLU, 0, 0, core.Qt__AlignRight)
 
 	//Add the FEN input box
 	lineEdit = widgets.NewQLineEdit(nil)
@@ -255,6 +325,12 @@ func Start(num int, s []string) {
 	turnIndicator.SetIconSize(core.NewQSize2(40, 40))
 	centralLayout.AddWidget2(turnIndicator, 2, 0, core.Qt__AlignLeft)
 
+	final = widgets.NewQPushButton2("", nil)
+	final.SetMinimumSize2(100, 50)
+	final.ConnectClicked(reset)
+	centralLayout.AddWidget2(final, 1, 0, core.Qt__AlignCenter)
+	final.Hide()
+
 	DisplayBoard()
 
 	//Setup the main window
@@ -264,6 +340,8 @@ func Start(num int, s []string) {
 	mainWindow.SetWindowTitle("Attax")
 	mainWindow.Show()
 	//mainWindow.ShowMaximized()
+
+	go LaunchTimer()
 
 	widgets.QApplication_Exec()
 }

@@ -11,7 +11,6 @@ func init() {
 	ataxx.InitAtaxx()
 }
 
-//Use goroutines for multithreading when playing with engines
 func main() {
 	wgui.Start(len(os.Args), os.Args)
 }

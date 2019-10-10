@@ -94,35 +94,39 @@ func setTimers() {
 
 
 func updateTimers() {
-	timeElaped := time.Now().Sub(turnChangeTime)
 
-	if turn == RED {
-		remTimeRED = remTimeRED - timeElaped
-		mins, secs := getMS(remTimeRED.Seconds())
-		labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mins, secs))
-	} else {
-		remTimeBLU = remTimeBLU - timeElaped
-		mins, secs := getMS(remTimeBLU.Seconds())
-		labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mins, secs))
-	}
-	turnChangeTime = time.Now()
-	timer := time.NewTimer(3 * time.Second / 7)
+	var timer *time.Timer
+	var timeElaped time.Duration
 
-	for channelAct := false; !channelAct; {
-		select {
-		case <-stopTimer:
-			return
-		case <-timer.C:
-			channelAct = true
-			//break //This doesnt work, go is just retarded
+	for remTimeBLU > 0 && remTimeRED > 0 {
+		timeElaped = time.Now().Sub(turnChangeTime)
+
+		if turn == RED {
+			remTimeRED = remTimeRED - timeElaped
+			mins, secs := getMS(remTimeRED.Seconds())
+			labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mins, secs))
+		} else {
+			remTimeBLU = remTimeBLU - timeElaped
+			mins, secs := getMS(remTimeBLU.Seconds())
+			labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mins, secs))
+		}
+		turnChangeTime = time.Now()
+		timer = time.NewTimer(3 * time.Second / 8)
+
+		for channelAct := false; !channelAct; {
+			select {
+			case <-stopTimer:
+				return
+			case <-timer.C:
+				channelAct = true
+				//break //This doesnt work, go is just retarded
+			}
 		}
 	}
 
-	if remTimeBLU > 0 && remTimeRED > 0 {
-		updateTimers()
-	} else if remTimeBLU <= 0 {
+	if remTimeBLU <= 0 {
 		gameEnd(RED)
-	} else {
+	} else if remTimeRED <= 0 {
 		gameEnd(BLU)
 	}
 }

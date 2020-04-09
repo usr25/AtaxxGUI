@@ -2,8 +2,11 @@ package wgui
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"time"
+	"strconv"
+	"strings"
 
 	"Ataxx/ataxx"
 	. "Ataxx/utils"
@@ -38,19 +41,61 @@ var (
 	active      int = -1
 	activeColor int = -1
 
-	remTimeBLU 	time.Duration
-	remTimeRED 	time.Duration
-	turnChangeTime time.Time
-
-	turn 		int
 	stopTimer 	chan bool
+
+	gd GameData
 )
+
+
+type Params struct {
+	Path string
+	Tc TimeControl
+}
 
 type Button struct {
 	button *widgets.QPushButton
 	row    int
 	col    int
 	state  int
+}
+
+type TimeControl struct {
+	initialTime time.Duration
+	increment time.Duration
+	infinite bool
+}
+
+type GameData struct {
+	tc TimeControl
+	remTime [2]time.Duration
+	turnChangeTime time.Time
+	turn int
+}
+
+func NewGameData(tc TimeControl) GameData {
+	remTime := [2]time.Duration{tc.initialTime, tc.initialTime}
+	return GameData {tc, remTime, time.Now(), BLU}
+}
+
+func ParseTC(s string) (tc TimeControl) {
+
+	if strings.Compare(s, "inf") == 0 {
+		tc = TimeControl{0, 0, true}
+	} else {
+		initialTime := 0
+		increment := 0
+		if strings.Contains(s, "+") {
+			res := strings.Split(s, "+")
+			initialTime, _ = strconv.Atoi(res[0])
+			increment, _ = strconv.Atoi(res[1])
+		} else {
+			initialTime, _ = strconv.Atoi(s)
+		}
+
+		tc = TimeControl{time.Duration(initialTime) * time.Second, time.Duration(increment) * time.Second, false}
+	}
+
+	return
 }
 
 func loadAssets() {
@@ -64,30 +109,29 @@ func loadAssets() {
 	redHaloIcon = gui.NewQIcon5(path.Join(assetPath, "red_halo.png"))
 }
 
-func setupPath(args []string) {
-	if len(args) > 1 {
-		assetPath = path.Join(args[1], "wgui/assets")
-	}
-}
 
 func getMS(t float64) (int, int) {
 	return int(t) / 60, int(t) % 60
 }
 
-func LaunchTimer() {
-	turnChangeTime = time.Now()
-	remTimeRED = 3 * 60 * time.Second
-	remTimeBLU = 3 * 60 * time.Second
+func incrementTime(side int) {
+	if gd.remTime[side] > 0 {
+		gd.remTime[side] += gd.tc.increment
+	}
+}
 
-	stopTimer = make(chan bool, 2)
+func LaunchTimer() {
+	gd.turnChangeTime = time.Now()
+
+	stopTimer = make(chan bool)
 
 	setTimers()
 	updateTimers()
 }
 
 func setTimers() {
-	mB, sB := getMS(remTimeBLU.Seconds())
-	mR, sR := getMS(remTimeRED.Seconds())
+	mB, sB := getMS(gd.remTime[BLU].Seconds())
+	mR, sR := getMS(gd.remTime[BLU].Seconds())
 	labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mB, sB))
 	labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mR, sR))
 }
@@ -98,20 +142,28 @@ func updateTimers() {
 	var timer *time.Timer
 	var timeElaped time.Duration
 
-	for remTimeBLU > 0 && remTimeRED > 0 {
-		timeElaped = time.Now().Sub(turnChangeTime)
+	if gd.tc.infinite {
+		labelRED.SetText("RED: -:--")
+		labelBLU.SetText("BLU: -:--")
+		return
+	}
+	for gd.remTime[BLU] > 0 && gd.remTime[RED] > 0 {
+		timeElaped = time.Now().Sub(gd.turnChangeTime)
 
-		if turn == RED {
-			remTimeRED = remTimeRED - timeElaped
-			mins, secs := getMS(remTimeRED.Seconds())
-			labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mins, secs))
+		if gd.turn == RED {
+			gd.remTime[RED] = gd.remTime[RED] - timeElaped
 		} else {
-			remTimeBLU = remTimeBLU - timeElaped
-			mins, secs := getMS(remTimeBLU.Seconds())
-			labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mins, secs))
+			gd.remTime[BLU] = gd.remTime[BLU] - timeElaped
 		}
-		turnChangeTime = time.Now()
-		timer = time.NewTimer(3 * time.Second / 8)
+
+		mins, secs := getMS(gd.remTime[RED].Seconds())
+		labelRED.SetText(fmt.Sprintf("RED: %d:%02d", mins, secs))
+
+		mins, secs = getMS(gd.remTime[BLU].Seconds())
+		labelBLU.SetText(fmt.Sprintf("BLU: %d:%02d", mins, secs))
+
+		gd.turnChangeTime = time.Now()
+		timer = time.NewTimer(time.Second / 4)
 
 		for channelAct := false; !channelAct; {
 			select {
@@ -119,15 +171,14 @@ func updateTimers() {
 				return
 			case <-timer.C:
 				channelAct = true
-				//break //This doesnt work, go is just retarded
 			}
 		}
 	}
 
-	if remTimeBLU <= 0 {
-		gameEnd(RED)
-	} else if remTimeRED <= 0 {
-		gameEnd(BLU)
+	if gd.remTime[BLU] <= 0 {
+		gameEndMsg(RED, WIN_ON_TIME)
+	} else if gd.remTime[RED] <= 0 {
+		gameEndMsg(BLU, WIN_ON_TIME)
 	}
 }
 
@@ -135,10 +186,10 @@ func updateTurnIcon() {
 	newTurn := ataxx.B().Turn
 	var icon *gui.QIcon
 	if newTurn == RED {
-		turn = RED
+		gd.turn = RED
 		icon = redIcon
 	} else {
-		turn = BLU
+		gd.turn = BLU
 		icon = bluIcon
 	}
 
@@ -149,12 +200,21 @@ func setIcon(x, y int, icon *gui.QIcon) {
 	buttons[x][y].button.SetIcon(icon)
 }
 
-func gameEnd(winner int) {
+func gameEndMsg(winner int, condition int) {
+
 	var str string
 	if winner == BLU {
-		str = "BLU is the winner!"
+		if condition == WIN_ON_TIME{
+			str = "BLU wins on time"
+		} else {
+			str = "BLU wins"
+		}
 	} else if winner == RED {
-		str = "RED is the winner!"
+		if condition == WIN_ON_TIME{
+			str = "RED wins on time"
+		} else {
+			str = "RED wins"
+		}
 	} else {
 		str = "It's a draw!"
 	}
@@ -164,12 +224,14 @@ func gameEnd(winner int) {
 	final.SetText(str)
 }
 
+//This generates the function that is called when asked to reset the board
 func reset(bool) {
-	stopTimer <- true //To avoid the blocking of the channel here stopTimer is buffered (cap = 2)
+	gd = NewGameData(gd.tc)
+
 	final.Hide()
 	ataxx.InitAtaxx()
 	DisplayBoard()
-	close(stopTimer)
+
 	go LaunchTimer()
 }
 
@@ -192,14 +254,22 @@ func updateBoard(bc Button) {
 		i, j := PosToCoords(active)
 		if DistInf(bc.row, bc.col, i, j) <= 2 {
 
+			incrementTime(activeColor)
+
 			ataxx.MakeMove(active, CoordsToPos(bc.row, bc.col), activeColor)
 			fen := ataxx.GenFen()
 			Assert(ataxx.IsValidFen(fen), "The updated fen isn't valid")
 			lineEdit.SetText(fen)
 			DisplayBoard()
-			turnChangeTime = time.Now()
+			gd.turnChangeTime = time.Now()
 			if ataxx.Finished() {
-				gameEnd(ataxx.Winner())
+				//If tc is infinite there is nobody listening
+				if !gd.tc.infinite {
+					//We do this to stop the timers
+					stopTimer <- true
+					close(stopTimer)
+				}
+				gameEndMsg(ataxx.Winner(), WIN)
 			}
 		}
 	}
@@ -225,14 +295,14 @@ func updateBoard(bc Button) {
 func getIcon(state int) *gui.QIcon {
 	//This could be made with an array and using an offset, like utils.ToByte
 	switch state {
-	case NO:
-		return emptyIcon
 	case BLU:
 		return bluIcon
 	case RED:
 		return redIcon
 	case WALL:
 		return wallIcon
+	case NO:
+		fallthrough //In case I change this in the future
 	default:
 		return emptyIcon
 	}
@@ -279,9 +349,15 @@ func initButtons() {
 	}
 }
 
-func Start(num int, s []string) {
+func Start(num int, s []string, prms Params) {
 
-	setupPath(s)
+	assetPath = path.Join(prms.Path, "wgui", "assets")
+	_, err := os.Stat(assetPath)
+	if os.IsNotExist(err) {
+		fmt.Println(fmt.Sprintf("%s is not a valid directory, pass the argument -h for help", assetPath))
+		return
+	}
+
 	widgets.NewQApplication(num, s)
 
 	loadAssets()
@@ -289,6 +365,8 @@ func Start(num int, s []string) {
 	mainWindow := widgets.NewQMainWindow(nil, 0)
 
 	//Initialize and populate the buttons based on the board
+	gd = NewGameData(prms.Tc)
+
 	initButtons()
 
 	scrollWidget := widgets.NewQScrollArea(nil)
@@ -312,7 +390,6 @@ func Start(num int, s []string) {
 	lineEdit.SetMinimumSize2(200, 30)
 	lineEdit.ConnectTextEdited(func(fen string) {
 
-		fmt.Println(fen)
 		if fen == "default" {
 			ataxx.InitAtaxx()
 			DisplayBoard()
@@ -329,6 +406,7 @@ func Start(num int, s []string) {
 	turnIndicator.SetIconSize(core.NewQSize2(40, 40))
 	centralLayout.AddWidget2(turnIndicator, 2, 0, core.Qt__AlignLeft)
 
+
 	final = widgets.NewQPushButton2("", nil)
 	final.SetMinimumSize2(100, 50)
 	final.ConnectClicked(reset)
@@ -344,6 +422,7 @@ func Start(num int, s []string) {
 	mainWindow.SetWindowTitle("Attax")
 	mainWindow.Show()
 	//mainWindow.ShowMaximized()
+
 
 	go LaunchTimer()
 

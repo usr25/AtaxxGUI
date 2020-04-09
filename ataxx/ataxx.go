@@ -44,7 +44,7 @@ func playerCanMove() bool {
 	return false
 }
 
-//Pos moves for a given position, it is color independent
+//Possible moves for a given position, it is color independent
 func PosMoves(pos int) []int {
 	x, y := PosToCoords(pos)
 	var res [25]int

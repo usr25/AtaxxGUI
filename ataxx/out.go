@@ -11,9 +11,11 @@ func InitAtaxx() {
 }
 
 func isValidFenChar(c rune) bool {
+	//It is a valid character
 	if c == 'o' || c == 'x' || c == '-' || c == ' ' || c == '/' {
 		return true
 	}
+	//Or it is a valid number, in the range [1, SIZE]
 	return int(c-'0') > 0 && int(c-'0') <= SIZE
 }
 
@@ -23,6 +25,7 @@ func IsValidFen(fen string) bool {
 		return false
 	}
 	last := fen[len(fen)-1]
+	//It has to end with a stm, which is written as "<pos> x" or "<pos> o"
 	if (last != 'x' && last != 'o') || fen[len(fen)-2] != ' ' {
 		return false
 	}
@@ -64,6 +67,7 @@ func GenFen() string {
 
 	sb.WriteByte(' ')
 	sb.WriteByte(ToByte(board.Turn))
+
 	return sb.String()
 }
 

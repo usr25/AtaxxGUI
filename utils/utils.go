@@ -7,6 +7,10 @@ const (
 	BLU  int = 1
 
 	SIZE int = 7
+
+	WIN int = 9
+	WIN_ON_TIME int = 10
+	WIN_ON_RESIGNATION int = 11
 )
 
 var Bytes = [4]byte{'-', 'M', 'o', 'x'} //You shouldn't get M
